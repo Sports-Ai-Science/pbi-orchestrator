@@ -12,28 +12,58 @@
 class ConcurrencySemaphore {
   private currentCount = 0;
   private readonly maxCount: number;
-  private readonly waitQueue: Array<() => void> = [];
+  private readonly waitQueue: Array<{
+    resolve: () => void;
+    timestamp: number;
+    workflowId: string;
+  }> = [];
+  private readonly acquireTimeout = 300000; // 5 minutes
 
   constructor(maxCount: number) {
     this.maxCount = maxCount;
   }
 
-  async acquire(): Promise<void> {
+  async acquire(workflowId: string): Promise<void> {
     if (this.currentCount < this.maxCount) {
       this.currentCount++;
       return Promise.resolve();
     }
 
-    return new Promise<void>((resolve) => {
-      this.waitQueue.push(resolve);
+    return new Promise<void>((resolve, reject) => {
+      const timestamp = Date.now();
+      this.waitQueue.push({ resolve, timestamp, workflowId });
+
+      // Timeout mechanism to prevent indefinite waiting
+      const timeoutId = setTimeout(() => {
+        const index = this.waitQueue.findIndex((item) => item.workflowId === workflowId);
+        if (index !== -1) {
+          this.waitQueue.splice(index, 1);
+          reject(
+            new Error(
+              `Timeout waiting for concurrency slot (${this.acquireTimeout}ms) for workflow ${workflowId}`
+            )
+          );
+        }
+      }, this.acquireTimeout);
+
+      // Override resolve to clear timeout
+      const originalResolve = resolve;
+      const wrappedResolve = () => {
+        clearTimeout(timeoutId);
+        originalResolve();
+      };
+      const queueItem = this.waitQueue[this.waitQueue.length - 1];
+      if (queueItem) {
+        queueItem.resolve = wrappedResolve;
+      }
     });
   }
 
   release(): void {
     if (this.waitQueue.length > 0) {
-      const resolve = this.waitQueue.shift();
-      if (resolve) {
-        resolve();
+      const item = this.waitQueue.shift();
+      if (item) {
+        item.resolve();
       }
     } else {
       this.currentCount = Math.max(0, this.currentCount - 1);
@@ -49,7 +79,7 @@ const semaphore = new ConcurrencySemaphore(2);
 
 export async function acquireLock(workflowId: string): Promise<void> {
   console.log(`[${workflowId}] Acquiring concurrency slot...`);
-  await semaphore.acquire();
+  await semaphore.acquire(workflowId);
   console.log(`[${workflowId}] Concurrency slot acquired. Active: ${semaphore.getCurrentCount()}`);
 }
 

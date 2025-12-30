@@ -22,10 +22,12 @@ const { processPBI } = proxyActivities<typeof activities>({
 export async function pbiWorkflow(input: PBIWorkflowInput): Promise<PBIWorkflowResult> {
   const startTime = Date.now();
   const workflowId = `${input.pbiId}-${startTime}`;
+  let slotAcquired = false;
 
   try {
     // Acquire concurrency slot (blocks if 2 workflows already running)
     await ConcurrencyManager.acquireSlot(workflowId);
+    slotAcquired = true;
 
     // Execute PBI processing
     const result = await processPBI(input.pbiId, input.pbiName, input.parameters);
@@ -35,6 +37,7 @@ export async function pbiWorkflow(input: PBIWorkflowInput): Promise<PBIWorkflowR
 
     // Release concurrency slot
     await ConcurrencyManager.releaseSlot(workflowId);
+    slotAcquired = false;
 
     const executionTime = Date.now() - startTime;
 
@@ -45,8 +48,10 @@ export async function pbiWorkflow(input: PBIWorkflowInput): Promise<PBIWorkflowR
       result: result.result,
     };
   } catch (error) {
-    // Ensure we release the slot even on error
-    await ConcurrencyManager.releaseSlot(workflowId);
+    // Ensure we release the slot even on error, but only if it was acquired
+    if (slotAcquired) {
+      await ConcurrencyManager.releaseSlot(workflowId);
+    }
 
     const executionTime = Date.now() - startTime;
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
