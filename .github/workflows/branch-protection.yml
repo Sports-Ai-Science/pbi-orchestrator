@@ -15,17 +15,17 @@ jobs:
       contents: read
     steps:
       - name: Check if direct push
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          ACTOR: ${{ github.actor }}
         run: |
           # This workflow prevents direct pushes to main, but allows:
           # 1. PR merge commits (commit message starts with "Merge pull request #")
           # 2. Commits by github-actions[bot]
           
-          # Get commit message and actor (properly quoted to prevent injection)
-          COMMIT_MESSAGE='${{ github.event.head_commit.message }}'
-          ACTOR='${{ github.actor }}'
-          
           # Check if this is a PR merge commit
-          if echo "$COMMIT_MESSAGE" | grep -q '^Merge pull request #'; then
+          # Note: This pattern matches GitHub's default merge commit message format
+          if printf '%s\n' "$COMMIT_MESSAGE" | grep -q '^Merge pull request #'; then
             echo "✓ This is a PR merge commit - allowed"
             exit 0
           fi
